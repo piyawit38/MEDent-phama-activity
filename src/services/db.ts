@@ -4,6 +4,8 @@
  */
 
 import { Activity, Registration, Attachment, ActivityQA } from '../types';
+import { collection, doc, setDoc, deleteDoc, onSnapshot, getDocs } from 'firebase/firestore';
+import { db } from './firebase';
 
 const ACTIVITIES_KEY = 'medent_phama_activities';
 const REGISTRATIONS_KEY = 'medent_phama_registrations';
@@ -203,6 +205,8 @@ const PRESEEDED_REGISTRATIONS: Registration[] = [
 ];
 
 export class DBService {
+  private static isInitialized = false;
+
   private static init() {
     if (typeof window !== 'undefined') {
       const storedActivities = localStorage.getItem(ACTIVITIES_KEY);
@@ -226,18 +230,75 @@ export class DBService {
       if (!localStorage.getItem(QAS_KEY)) {
         localStorage.setItem(QAS_KEY, JSON.stringify(PRESEEDED_QAS));
       }
+
+      // Initialize Firebase sync
+      this.initFirebaseSync().catch(err => {
+        console.error('Error starting Firebase sync:', err);
+      });
     }
   }
 
-  // Get all activities sorted by date (newest first / chronologically, as requested: "เรียงกิจกรรมตามวันที่")
-  // Let's sort chronologically (closest date first)
+  // Live real-time synchronizer with Firestore
+  private static async initFirebaseSync() {
+    if (this.isInitialized) return;
+    this.isInitialized = true;
+
+    // 1. Listen to activities
+    onSnapshot(collection(db, 'activities'), async (snapshot) => {
+      if (snapshot.empty) {
+        // If Firestore is empty, seed it with PRESEEDED data
+        const currentSnap = await getDocs(collection(db, 'activities'));
+        if (currentSnap.empty) {
+          console.log('Seeding Firestore with default activities...');
+          for (const act of PRESEEDED_ACTIVITIES) {
+            await setDoc(doc(db, 'activities', act.id), act);
+          }
+          for (const reg of PRESEEDED_REGISTRATIONS) {
+            await setDoc(doc(db, 'registrations', reg.id), reg);
+          }
+          for (const qa of PRESEEDED_QAS) {
+            await setDoc(doc(db, 'qas', qa.id), qa);
+          }
+          return;
+        }
+      }
+
+      const list: Activity[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as Activity);
+      });
+      localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('db-update'));
+    });
+
+    // 2. Listen to registrations
+    onSnapshot(collection(db, 'registrations'), (snapshot) => {
+      const list: Registration[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as Registration);
+      });
+      localStorage.setItem(REGISTRATIONS_KEY, JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('db-update'));
+    });
+
+    // 3. Listen to Q&As
+    onSnapshot(collection(db, 'qas'), (snapshot) => {
+      const list: ActivityQA[] = [];
+      snapshot.forEach((doc) => {
+        list.push(doc.data() as ActivityQA);
+      });
+      localStorage.setItem(QAS_KEY, JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('db-update'));
+    });
+  }
+
+  // Get all activities sorted chronologically by date
   static getActivities(): Activity[] {
     this.init();
     if (typeof window === 'undefined') return [];
     try {
       const data = localStorage.getItem(ACTIVITIES_KEY);
       const list: Activity[] = data ? JSON.parse(data) : [];
-      // Sort chronologically by date
       return list.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     } catch (e) {
       console.error('Error reading activities', e);
@@ -250,27 +311,34 @@ export class DBService {
     return list.find((a) => a.id === id) || null;
   }
 
-  // Save activity (create or edit)
+  // Save activity (create or edit) both locally and in Firestore
   static saveActivity(activity: Activity): void {
     this.init();
     if (typeof window === 'undefined') return;
     try {
       const list = this.getActivities();
       const index = list.findIndex((a) => a.id === activity.id);
+      let finalActivity = { ...activity };
       
       if (index >= 0) {
-        list[index] = { ...activity };
+        list[index] = finalActivity;
       } else {
-        list.push({ ...activity, createdAt: new Date().toISOString() });
+        finalActivity.createdAt = new Date().toISOString();
+        list.push(finalActivity);
       }
       
       localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('db-update'));
+
+      // Write to Firestore
+      setDoc(doc(db, 'activities', finalActivity.id), finalActivity)
+        .catch(err => console.error('Error writing activity to Firestore:', err));
     } catch (e) {
       console.error('Error saving activity', e);
     }
   }
 
-  // Delete activity
+  // Delete activity both locally and in Firestore
   static deleteActivity(id: string): void {
     this.init();
     if (typeof window === 'undefined') return;
@@ -279,10 +347,22 @@ export class DBService {
       list = list.filter((a) => a.id !== id);
       localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(list));
 
-      // Also clean up registrations for this activity
+      // Also clean up registrations for this activity locally
       let regs = this.getRegistrations();
+      const regsToDelete = regs.filter((r) => r.activityId === id);
       regs = regs.filter((r) => r.activityId !== id);
       localStorage.setItem(REGISTRATIONS_KEY, JSON.stringify(regs));
+
+      window.dispatchEvent(new CustomEvent('db-update'));
+
+      // Clean up in Firestore
+      deleteDoc(doc(db, 'activities', id))
+        .catch(err => console.error('Error deleting activity from Firestore:', err));
+      
+      for (const r of regsToDelete) {
+        deleteDoc(doc(db, 'registrations', r.id))
+          .catch(err => console.error('Error deleting registration from Firestore:', err));
+      }
     } catch (e) {
       console.error('Error deleting activity', e);
     }
@@ -295,7 +375,6 @@ export class DBService {
     try {
       const data = localStorage.getItem(REGISTRATIONS_KEY);
       const list: Registration[] = data ? JSON.parse(data) : [];
-      // Newest registrations first
       return list.sort((a, b) => new Date(b.registeredAt).getTime() - new Date(a.registeredAt).getTime());
     } catch (e) {
       console.error('Error reading registrations', e);
@@ -303,7 +382,7 @@ export class DBService {
     }
   }
 
-  // Register for an activity
+  // Register for an activity (adds locally and pushes to Firestore)
   static saveRegistration(reg: Omit<Registration, 'id' | 'registeredAt'>): Registration {
     this.init();
     const newReg: Registration = {
@@ -317,6 +396,11 @@ export class DBService {
         const list = this.getRegistrations();
         list.push(newReg);
         localStorage.setItem(REGISTRATIONS_KEY, JSON.stringify(list));
+        window.dispatchEvent(new CustomEvent('db-update'));
+
+        // Write to Firestore
+        setDoc(doc(db, 'registrations', newReg.id), newReg)
+          .catch(err => console.error('Error writing registration to Firestore:', err));
       } catch (e) {
         console.error('Error saving registration', e);
       }
@@ -324,7 +408,7 @@ export class DBService {
     return newReg;
   }
 
-  // Delete registration
+  // Delete registration both locally and in Firestore
   static deleteRegistration(id: string): void {
     this.init();
     if (typeof window === 'undefined') return;
@@ -332,6 +416,10 @@ export class DBService {
       let list = this.getRegistrations();
       list = list.filter((r) => r.id !== id);
       localStorage.setItem(REGISTRATIONS_KEY, JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('db-update'));
+
+      deleteDoc(doc(db, 'registrations', id))
+        .catch(err => console.error('Error deleting registration from Firestore:', err));
     } catch (e) {
       console.error('Error deleting registration', e);
     }
@@ -345,7 +433,6 @@ export class DBService {
       const data = localStorage.getItem(QAS_KEY);
       const list: ActivityQA[] = data ? JSON.parse(data) : [];
       const filtered = list.filter((qa) => qa.activityId === activityId);
-      // Sort oldest first so conversation flows naturally down chronologically
       return filtered.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     } catch (e) {
       console.error('Error reading QAs', e);
@@ -384,6 +471,11 @@ export class DBService {
         const list: ActivityQA[] = data ? JSON.parse(data) : [];
         list.push(newQA);
         localStorage.setItem(QAS_KEY, JSON.stringify(list));
+        window.dispatchEvent(new CustomEvent('db-update'));
+
+        // Write to Firestore
+        setDoc(doc(db, 'qas', newQA.id), newQA)
+          .catch(err => console.error('Error writing question to Firestore:', err));
       } catch (e) {
         console.error('Error saving question', e);
       }
@@ -400,9 +492,18 @@ export class DBService {
       const list: ActivityQA[] = data ? JSON.parse(data) : [];
       const index = list.findIndex(qa => qa.id === qaId);
       if (index >= 0) {
-        list[index].answer = answer.trim();
-        list[index].answeredAt = new Date().toISOString();
+        const updatedQa = {
+          ...list[index],
+          answer: answer.trim(),
+          answeredAt: new Date().toISOString()
+        };
+        list[index] = updatedQa;
         localStorage.setItem(QAS_KEY, JSON.stringify(list));
+        window.dispatchEvent(new CustomEvent('db-update'));
+
+        // Write to Firestore
+        setDoc(doc(db, 'qas', qaId), updatedQa)
+          .catch(err => console.error('Error writing answer to Firestore:', err));
       }
     } catch (e) {
       console.error('Error answering question', e);
@@ -418,6 +519,10 @@ export class DBService {
       let list: ActivityQA[] = data ? JSON.parse(data) : [];
       list = list.filter(qa => qa.id !== qaId);
       localStorage.setItem(QAS_KEY, JSON.stringify(list));
+      window.dispatchEvent(new CustomEvent('db-update'));
+
+      deleteDoc(doc(db, 'qas', qaId))
+        .catch(err => console.error('Error deleting QA from Firestore:', err));
     } catch (e) {
       console.error('Error deleting QA', e);
     }
