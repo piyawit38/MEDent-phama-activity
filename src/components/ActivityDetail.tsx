@@ -15,10 +15,15 @@ import {
   Briefcase, 
   ChevronRight,
   Download,
-  ExternalLink
+  ExternalLink,
+  Users,
+  ChevronDown,
+  ChevronUp,
+  GraduationCap
 } from 'lucide-react';
 import { Activity, Attachment } from '../types';
 import ActivityQABoard from './ActivityQABoard';
+import { DBService } from '../services/db';
 
 interface ActivityDetailProps {
   activity: Activity;
@@ -28,6 +33,12 @@ interface ActivityDetailProps {
 
 export default function ActivityDetail({ activity, onRegisterClick, isAdmin = false }: ActivityDetailProps) {
   const [selectedImage, setSelectedImage] = useState<string>(activity.coverImage);
+  const [showParticipants, setShowParticipants] = useState<boolean>(false);
+
+  // Fetch registrations for this activity that have intent: 'join'
+  const participants = DBService.getRegistrations().filter(
+    (r) => r.activityId === activity.id && r.intent === 'join'
+  );
 
   // Sync state if activity changes
   React.useEffect(() => {
@@ -312,6 +323,52 @@ export default function ActivityDetail({ activity, onRegisterClick, isAdmin = fa
         <div className="text-[10px] text-slate-400 font-medium">
           * มีคำถามเพิ่มเติมติดต่อผู้ประสานงานได้ทันที
         </div>
+      </div>
+
+      {/* Registered Participants Section */}
+      <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-5" id="participants-list-section">
+        <button
+          onClick={() => setShowParticipants(!showParticipants)}
+          className="w-full flex items-center justify-between font-bold text-slate-700 text-xs md:text-sm focus:outline-none cursor-pointer"
+        >
+          <div className="flex items-center gap-2">
+            <Users className="w-4 h-4 text-purple-brand" />
+            <span>รายชื่อน้องๆ ที่ตอบรับเข้าร่วมกิจกรรมนี้</span>
+            <span className="px-2.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] rounded-full font-black">
+              {participants.length} คน
+            </span>
+          </div>
+          {showParticipants ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </button>
+
+        {showParticipants && (
+          <div className="mt-4 pt-4 border-t border-slate-200/60 space-y-3 animate-fade-in">
+            {participants.length === 0 ? (
+              <p className="text-xs text-slate-400 italic py-2 text-center">
+                ยังไม่มีผู้ลงทะเบียนเข้าร่วมกิจกรรมนี้ในขณะนี้ มาร่วมเป็นคนแรกเลย!
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-[250px] overflow-y-auto pr-1" id="participants-scrollbar">
+                {participants.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-start gap-2.5 p-3 bg-white rounded-xl border border-slate-150 shadow-xs hover:border-purple-200 transition-all"
+                  >
+                    <div className="w-7 h-7 bg-purple-50 text-purple-brand rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <GraduationCap className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-800 truncate">{p.studentName}</p>
+                      <p className="text-[10px] text-slate-400 font-medium truncate">
+                        {p.school ? `${p.school}` : ''} {p.grade ? `(${p.grade})` : ''}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Discussion & Q&A Board */}
