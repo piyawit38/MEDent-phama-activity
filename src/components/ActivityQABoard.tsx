@@ -57,6 +57,14 @@ export default function ActivityQABoard({ activityId, isAdmin = false, onRefresh
     setReplyQAId(null);
     setReplyText('');
     setReplyError('');
+
+    const handleDbUpdate = () => {
+      loadQAs();
+    };
+    window.addEventListener('db-update', handleDbUpdate);
+    return () => {
+      window.removeEventListener('db-update', handleDbUpdate);
+    };
   }, [activityId]);
 
   const handleAskSubmit = (e: React.FormEvent) => {
