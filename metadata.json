@@ -1,0 +1,6 @@
+{
+  "name": "MEDent phama Health Innovation Activity",
+  "description": "ระบบสำหรับประชาสัมพันธ์กิจกรรมของโครงการ และลงทะเบียนตอบรับการเข้าร่วมกิจกรรมสำหรับผู้ปกครองและนักเรียน",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

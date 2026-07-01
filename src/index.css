@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Sarabun', sans-serif;
+  --color-navy-brand: #1e3a8a;
+  --color-navy-light: #eff6ff;
+  --color-purple-brand: #7e22ce;
+  --color-purple-light: #faf5ff;
+}
+
+body {
+  font-family: 'Sarabun', 'Helvetica Neue', Arial, sans-serif;
+}
