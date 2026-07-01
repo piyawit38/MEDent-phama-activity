@@ -62,6 +62,14 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+
+    const handleDbUpdate = () => {
+      loadData();
+    };
+    window.addEventListener('db-update', handleDbUpdate);
+    return () => {
+      window.removeEventListener('db-update', handleDbUpdate);
+    };
   }, []);
 
   // Filter activities based on search query
